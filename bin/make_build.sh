@@ -3,31 +3,45 @@
 # ---- Variables (for all builds) --------------------------------------------------------------------------------------
 COMMIT_HASH=$(git rev-parse --short HEAD)
 BUILD_VERSION=$(python build.py version)
+IS_RELEASE_BUILD=false
+IS_RC_BUILD=false
+IS_PREVIEW_BUILD=false
+IS_DEV_BUILD=false
 
 if [ "${TRAVIS_BRANCH}" = "master" ]; then
     VERSION=${BUILD_VERSION}
+    IS_RELEASE_BUILD=true
 elif [ "${TRAVIS_BRANCH}" = "develop" ]; then
     VERSION=${BUILD_VERSION}-${COMMIT_HASH}
+    IS_PREVIEW_BUILD=true
 elif [[ "${TRAVIS_BRANCH}" =~ ^RC-([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
     RC_VERSION=${BASH_REMATCH[1]}
     if [ "${BUILD_VERSION}" = "${RC_VERSION}" ]; then
         VERSION=$(python build.py version)
+        IS_RC_BUILD=true
     else
         VERSION=${TRAVIS_BRANCH}
+        IS_DEV_BUILD=true
     fi
 else
     VERSION=${TRAVIS_BRANCH}
+    IS_DEV_BUILD=true
 fi
 INSTALL_PACKAGE_NAME=anychart-installation-package-${VERSION}.zip
 
 echo Version: ${VERSION}
 echo Branch: ${TRAVIS_BRANCH}
 echo Commit Hash: ${COMMIT_HASH}
+
+echo Is release build: ${IS_RELEASE_BUILD}
+echo Is RC build: ${IS_RC_BUILD}
+echo Is dev preview build: ${IS_PREVIEW_BUILD}
+echo Is develop build: ${IS_DEV_BUILD}
 # ---- Variables (for all builds) --------------------------------------------------------------------------------------
 
 
 # ---- Variables (release builds only) ---------------------------------------------------------------------------------
-if [ "${TRAVIS_BRANCH}" = "master" ]; then
+if [ ${IS_RELEASE_BUILD} = "true" ]; then
     echo Fetching release build variables
     # check equal to ""
     NPM_VERSION_INFO=$(npm view anychart@${VERSION})
@@ -52,7 +66,7 @@ fi
 
 
 # ---- Blocker Checks (release builds only) ----------------------------------------------------------------------------
-if [ "${TRAVIS_BRANCH}" = "master" ]; then
+if [ ${IS_RELEASE_BUILD} = "true" ]; then
 
     if [ "${NPM_USER}" != "anychart" ]; then
         echo Wrong NPM user
@@ -95,7 +109,7 @@ cp ./bin/binaries_wrapper_start.txt ./dist/binaries_wrapper_start.txt
 
 
 # ---- One more check, should be executed right after binaries build (release builds only) -----------------------------
-if [ "${TRAVIS_BRANCH}" = "master" ]; then
+if [ ${IS_RELEASE_BUILD} = "true" ]; then
     GIT_STATUS=$(git status)
     if [[ "${GIT_STATUS}" =~ dist/themes/.+ ]]; then
         echo Theme files has changes, looks like you forgot update theme files in dist folder
@@ -116,7 +130,7 @@ fi
 
 
 # ---- Clear binary files to reduce result size (dev builds only) ------------------------------------------------------
-if [ "${TRAVIS_BRANCH}" != "master" ]; then
+if [ ${IS_DEV_BUILD} = "true" ] || [ ${IS_PREVIEW_BUILD} = "true" ] ; then
     echo Removeing geodata
     rm -rf dist/geodata
 fi
@@ -124,7 +138,7 @@ fi
 
 
 # ---- Build binary files (release builds only) ------------------------------------------------------------------------
-if [ "${TRAVIS_BRANCH}" = "master" ]; then
+if [ ${IS_RELEASE_BUILD} = "true" ]; then
     cd dist
     echo Downloading docs and demos
 
@@ -176,7 +190,7 @@ ssh -i ~/.ssh/id_rsa $STATIC_HOST_SSH_STRING "
 # ---- Copy dev legacy files (dev builds only) -------------------------------------------------------------------------
 # 7.x version DEV structure
 echo Copy dev legacy files
-if [ "${TRAVIS_BRANCH}" != "master" ]; then
+if [ ${IS_RELEASE_BUILD} = "false" ]; then
     ssh -i ~/.ssh/id_rsa $STATIC_HOST_SSH_STRING "
     rm -rf /apps/static/js/${VERSION} &&
     cp -r /apps/static/cdn/releases/${VERSION}/js /apps/static/js/${VERSION} &&
@@ -197,7 +211,7 @@ fi
 
 # ---- Copy release legacy files (release builds only) -----------------------------------------------------------------
 echo Copy release legacy files
-if [ "${TRAVIS_BRANCH}" = "master" ]; then
+if [ ${IS_RELEASE_BUILD} = "true" ]; then
     echo Copy prod legacy files
     ssh -i ~/.ssh/id_rsa $STATIC_HOST_SSH_STRING "
     rm -rf /apps/static/cdn/js/${VERSION} &&
@@ -214,10 +228,10 @@ fi
 
 
 # ---- Create latest version (release builds only) ---------------------------------------------------------------------
-if [ "${TRAVIS_BRANCH}" = "master" ]; then
+if [ ${IS_RELEASE_BUILD} = "true" ]; then
     echo Create latest version
     ssh -i ~/.ssh/id_rsa  $STATIC_HOST_SSH_STRING "
-    rm -rf /apps/static/cdn/releases/${MAJOR_VERSION}.x.x &&
+    rm -rf /apps/static/cdn/releases/v${MAJOR_VERSION} &&
     cp -r /apps/static/cdn/releases/${VERSION} /apps/static/cdn/releases/v${MAJOR_VERSION}"
 fi
 # ---- Create latest version (release builds only) ---------------------------------------------------------------------
@@ -225,16 +239,23 @@ fi
 
 # ---- Drop CDN cache for uploaded files (for all builds) --------------------------------------------------------------
 echo Dropping CDN cache
-if [ "${TRAVIS_BRANCH}" = "develop" ]; then
+if [ ${IS_PREVIEW_BUILD} = "true" ]; then
+    # drop cache for /releases/develop/*
     python ./bin/drop_cdn_cache.py ${TRAVIS_BRANCH} ${CDN_ALIASE} ${CDN_CONSUMER_KEY} ${CDN_CONSUMER_SECRET} ${CDN_ZONE_ID}
 else
+    # drop cache for /releases/X.X.X/*
     python ./bin/drop_cdn_cache.py ${VERSION} ${CDN_ALIASE} ${CDN_CONSUMER_KEY} ${CDN_CONSUMER_SECRET} ${CDN_ZONE_ID}
+fi
+
+if [ "${VERSION}" != "${TRAVIS_BRANCH}" ]; then
+    # CAT legacy structure
+    python ./bin/drop_cdn_cache.py ${TRAVIS_BRANCH} ${CDN_ALIASE} ${CDN_CONSUMER_KEY} ${CDN_CONSUMER_SECRET} ${CDN_ZONE_ID}
 fi
 # ---- Drop CDN cache for uploaded files (for all builds) --------------------------------------------------------------
 
 
 # ---- Release tasks (release builds only) -----------------------------------------------------------------------------
-if [ "${TRAVIS_BRANCH}" = "master" ]; then
+if [ ${IS_RELEASE_BUILD} = "true" ]; then
     # make NPM release
     echo Publishing NPM release
     npm publish
